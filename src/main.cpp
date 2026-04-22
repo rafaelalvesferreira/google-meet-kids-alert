@@ -290,7 +290,7 @@ State fetchCalendarState() {
   }
   // Apps Script responde 302 pra googleusercontent.com. Sem isto, não chegamos no corpo.
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setTimeout(8000);
+  http.setTimeout(15000);
 
   int code = http.GET();
   if (code != 200) {

@@ -122,15 +122,17 @@ void loop() {
     return;
   }
 
+  static uint8_t wifiRetries = 0;
   if (WiFi.status() != WL_CONNECTED) {
-    // FastLED pinta laranja pulsante enquanto tenta voltar.
-    uint8_t v = (sin8(millis() / 4));
+    uint8_t v = sin8(millis() / 4);
     fill_solid(leds, NUM_LEDS, CRGB(v, v / 3, 0));
     FastLED.show();
     WiFi.reconnect();
     delay(500);
+    if (++wifiRetries > 20) ESP.restart();  // ~10s sem WiFi → reabre portal
     return;
   }
+  wifiRetries = 0;
 
   unsigned long now = millis();
   if (now - lastPollMs > cfg.pollInterval * 1000UL || lastPollMs == 0) {

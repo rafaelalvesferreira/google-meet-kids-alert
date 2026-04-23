@@ -47,6 +47,7 @@
 #define BATTERY_EMPTY_V        3.00
 #define BATTERY_FULL_V         4.20
 
+
 // =====================================================================
 // ESTADO GLOBAL
 // =====================================================================
@@ -72,6 +73,7 @@ Config       cfg;
 State        currentState = STATE_UNKNOWN;
 unsigned long lastPollMs  = 0;
 int          consecutiveErrors = 0;
+bool         batteryTaskSent = false;
 
 // WiFiManager guarda ponteiros para os parâmetros customizados.
 WiFiManagerParameter* p_url = nullptr;
@@ -94,6 +96,7 @@ void   drawPattern(const uint8_t* pattern, CRGB fg);
 bool   handleButton();
 int    readBatteryPercent();
 CRGB   batteryColor(int percent);
+void   sendBatteryTask();
 
 // =====================================================================
 // SETUP / LOOP
@@ -144,6 +147,16 @@ void loop() {
       consecutiveErrors = 0;
       currentState = s;
     }
+
+    // Aproveita a janela de poll (já bloqueante) para enviar alerta de bateria
+    int batPct = readBatteryPercent();
+    if (batPct >= 0 && batPct < 10 && !batteryTaskSent) {
+      sendBatteryTask();
+      batteryTaskSent = true;
+    } else if (batPct < 0 || batPct >= 15) {
+      batteryTaskSent = false;
+    }
+
     lastPollMs = now;
   }
 
@@ -336,12 +349,12 @@ const uint8_t PATTERN_CIRCLE_X[8] = {
 
 // Círculo com "!" apagado de 2 colunas — amarelo blink (5min warning)
 const uint8_t PATTERN_CIRCLE_BANG[8] = {
-  0b00100100,
+  0b00111100,
   0b01100110,
   0b11100111,
   0b11100111,
-  0b11111111,
   0b11100111,
+  0b11111111,
   0b01100110,
   0b00111100
 };
@@ -403,7 +416,7 @@ int readBatteryPercent() {
   float vPin = (rawAvg / 4095.0f) * 3.3f;
   float vBat = vPin * 2.0f;          // desfaz o divisor 1:1
 
-  if (vBat < 0.5f) return -1;        // bateria ausente (USB-only)
+  if (vBat < BATTERY_EMPTY_V) return -1;  // ausente ou pino flutuando
 
   int pct = (int)((vBat - BATTERY_EMPTY_V) / (BATTERY_FULL_V - BATTERY_EMPTY_V) * 100);
   return constrain(pct, 0, 100);
@@ -463,4 +476,27 @@ bool handleButton() {
     }
   }
   return false;
+}
+
+// =====================================================================
+// TAREFA DE BATERIA — cria item no Google Tasks via Apps Script
+// =====================================================================
+void sendBatteryTask() {
+  if (cfg.url.length() == 0) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  String url = cfg.url;
+  url += (url.indexOf('?') >= 0 ? "&" : "?");
+  url += "action=battery&token=";
+  url += cfg.token;
+
+  if (!http.begin(client, url)) return;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(15000);
+  int code = http.GET();
+  Serial.printf("sendBatteryTask: HTTP %d\n", code);
+  http.end();
 }

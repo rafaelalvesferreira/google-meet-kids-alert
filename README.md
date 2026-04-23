@@ -17,12 +17,12 @@ símbolo vazado no miolo. Um LED de canto mostra a carga da bateria.
 ```
 VERDE / AMARELO       VERMELHO              AMARELO BLINK
 
-. . X X X X . .      . . R R R R . .      . . Y . . Y . .
+. . X X X X . .      . . R R R R . .      . . Y Y Y Y . .
 . X X X X X X .      . R R R R R R .      . Y Y . . Y Y .
 X X X X X X X X      R R . R R . R R      Y Y Y . . Y Y Y
 X X X X X X X X      R R R . . R R R      Y Y Y . . Y Y Y
-X X X X X X X X      R R R . . R R R      Y Y Y Y Y Y Y Y
-X X X X X X X X      R R . R R . R R      Y Y Y . . Y Y Y
+X X X X X X X X      R R R . . R R R      Y Y Y . . Y Y Y
+X X X X X X X X      R R . R R . R R      Y Y Y Y Y Y Y Y
 . X X X X X X .      . R R R R R R .      . Y Y . . Y Y .
 . . X X X X . .      . . R R R R . .      . . Y Y Y Y . .
 ```
@@ -179,6 +179,20 @@ const WARNING_MIN = 5;
 function doGet(e) {
   if (e.parameter.token !== TOKEN) return out('unauthorized');
 
+  // Alerta de bateria fraca — cria tarefa no Google Tasks
+  if (e.parameter.action === 'battery') {
+    const listas = Tasks.Tasklists.list().items;
+    if (listas && listas.length > 0) {
+      const task = {
+        title: 'Carregar bateria do Meet Alert',
+        notes: 'Bateria abaixo de 10%. Conecte ao carregador.',
+        due: new Date().toISOString()
+      };
+      Tasks.Tasks.insert(task, listas[0].id);
+    }
+    return out('task_created');
+  }
+
   const now = new Date();
   const janela = new Date(now.getTime() + 30 * 60 * 1000);
 
@@ -218,14 +232,16 @@ function out(s) {
 
 3. Troque `TOKEN` por um segredo seu (qualquer string — 16+ caracteres,
    alfanuméricos, sem espaços).
-4. **Deploy:** botão `Implantar` → `Nova implantação` → engrenagem →
+4. **Habilite a Tasks API:** no painel esquerdo clique em **Serviços** (`+`),
+   procure **Tasks API** e adicione. Sem isso o alerta de bateria não funciona.
+5. **Deploy:** botão `Implantar` → `Nova implantação` → engrenagem →
    `Aplicativo da Web`.
    - **Executar como:** `Eu` (sua conta do Google)
    - **Quem pode acessar:** `Qualquer pessoa`
-5. Clique em `Implantar`. Aceite as permissões que o Google pedir (Calendar
-   e execução como Web App). Copie a **URL do aplicativo da Web**, que
+6. Clique em `Implantar`. Aceite as permissões que o Google pedir (Calendar,
+   Tasks e execução como Web App). Copie a **URL do aplicativo da Web**, que
    termina em `/exec`.
-6. **Teste:** no navegador, abra
+7. **Teste:** no navegador, abra
    `https://script.google.com/.../exec?token=SEU_TOKEN`. Deve responder
    `green`, `yellow` ou `red`. Sem o token, responde `unauthorized`.
 
@@ -309,6 +325,11 @@ Depois de configurado:
   - Vermelho: 10-20%
   - Vermelho piscando rápido: < 10% (carregue!)
   - Apagado: bateria não detectada / sem bateria
+- Quando a bateria cai abaixo de 10%, o firmware cria automaticamente uma
+  tarefa **"Carregar bateria do Meet Alert"** no Google Tasks. A tarefa é
+  criada uma única vez por ciclo crítico — só volta a criar se a bateria
+  recuperar para ≥ 15% e cair novamente. O alerta é enviado durante o poll
+  normal (não interrompe as animações da matriz).
 
 ---
 
@@ -339,6 +360,20 @@ vai acontecer quando soltar.
 ### Mudar cores ou thresholds de bateria
 
 Abra `src/main.cpp` e ajuste em `batteryColor()`.
+
+### Mudar o threshold do alerta de bateria
+
+O alerta de tarefa dispara quando a bateria fica abaixo de 10% e reseta
+quando volta acima de 15%. Para alterar, edite os valores no bloco de poll
+dentro de `loop()` em `src/main.cpp`:
+
+```cpp
+if (batPct >= 0 && batPct < 10 && !batteryTaskSent) {  // ← limiar de disparo
+  ...
+} else if (batPct < 0 || batPct >= 15) {               // ← limiar de reset
+  batteryTaskSent = false;
+}
+```
 
 ### Mudar o LED que indica bateria
 

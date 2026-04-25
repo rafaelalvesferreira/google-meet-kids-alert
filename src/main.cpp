@@ -24,6 +24,7 @@
 #define MATRIX_DATA_PIN        D6    // DIN da matriz WS2812
 #define BATTERY_ADC_PIN        D0    // meio do divisor 100k + 100k
 #define BOOT_BUTTON_PIN        9     // botão BOOT do XIAO (GPIO9)
+#define EXT_BUTTON_PIN         D7    // botão externo (GPIO17) — mesma função do BOOT
 
 #define NUM_LEDS               64
 #define BATTERY_INDICATOR_LED  0     // índice do LED que mostra bateria
@@ -38,8 +39,8 @@
 #define DEFAULT_BRIGHTNESS     30
 #define DEFAULT_POLL_INTERVAL  30    // segundos entre polls do Apps Script
 
-#define BTN_HOLD_RESET_MS      3000  // 3s = apagar WiFi e reconfigurar
-#define BTN_HOLD_CONFIG_MS     5000  // 5s = portal mantendo WiFi atual
+#define BTN_HOLD_CONFIG_MS     3000  // 3s = portal mantendo WiFi atual
+#define BTN_HOLD_RESET_MS      9000  // 9s = apagar WiFi e reconfigurar
 
 #define BLINK_PERIOD_MS        500   // meio segundo ligado, meio desligado
 
@@ -107,11 +108,16 @@ void setup() {
   Serial.println("\n=== Meet Alert ===");
 
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(EXT_BUTTON_PIN, INPUT_PULLUP);
 
   FastLED.addLeds<WS2812, MATRIX_DATA_PIN, GRB>(leds, NUM_LEDS);
-  FastLED.setBrightness(DEFAULT_BRIGHTNESS);
+  FastLED.setBrightness(50);
+  fill_solid(leds, NUM_LEDS, CRGB::White);
+  FastLED.show();
+  delay(1000);
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
+  FastLED.setBrightness(DEFAULT_BRIGHTNESS);
 
   loadConfig();
   FastLED.setBrightness(cfg.brightness);
@@ -138,8 +144,17 @@ void loop() {
   wifiRetries = 0;
 
   unsigned long now = millis();
+
+  static unsigned long lastHeartbeat = 0;
+  if (now - lastHeartbeat >= 5000) {
+    Serial.printf("[%lus] vivo | WiFi=%d estado=%d\n", now / 1000, WiFi.status(), currentState);
+    lastHeartbeat = now;
+  }
+
   if (now - lastPollMs > cfg.pollInterval * 1000UL || lastPollMs == 0) {
+    Serial.printf("[%lus] Iniciando poll...\n", now / 1000);
     State s = fetchCalendarState();
+    Serial.printf("[%lus] Poll concluído.\n", millis() / 1000);
     if (s == STATE_ERROR) {
       consecutiveErrors++;
       if (consecutiveErrors >= 3) currentState = STATE_ERROR;
@@ -150,6 +165,8 @@ void loop() {
 
     // Aproveita a janela de poll (já bloqueante) para enviar alerta de bateria
     int batPct = readBatteryPercent();
+    if (batPct < 0) Serial.println("Bateria: sem leitura");
+    else            Serial.printf("Bateria: %d%%\n", batPct);
     if (batPct >= 0 && batPct < 10 && !batteryTaskSent) {
       sendBatteryTask();
       batteryTaskSent = true;
@@ -218,6 +235,7 @@ void readWMParameters() {
 }
 
 void connectWiFi() {
+  WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK);
   WiFiManager wm;
   wm.setDebugOutput(false);
   setupWMParameters(wm);
@@ -249,6 +267,7 @@ void connectWiFi() {
 void startConfigPortal(bool resetWifi) {
   Serial.printf("Portal de configuração (resetWifi=%d)\n", resetWifi);
 
+  WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK);
   WiFiManager wm;
   if (resetWifi) wm.resetSettings();
 
@@ -282,12 +301,10 @@ State parseStateString(const String& s) {
 
 State fetchCalendarState() {
   if (cfg.url.length() == 0) {
-    Serial.println("URL vazia, pule.");
+    Serial.println("  [fetch] URL vazia, pulando.");
     return STATE_ERROR;
   }
 
-  // Apps Script é HTTPS. setInsecure() pula validação de certificado — não é um
-  // problema aqui porque a autenticação é pelo token na query string.
   WiFiClientSecure client;
   client.setInsecure();
 
@@ -297,17 +314,20 @@ State fetchCalendarState() {
   fullUrl += "token=";
   fullUrl += cfg.token;
 
+  Serial.println("  [fetch] http.begin...");
   if (!http.begin(client, fullUrl)) {
-    Serial.println("http.begin falhou");
+    Serial.println("  [fetch] http.begin FALHOU");
     return STATE_ERROR;
   }
-  // Apps Script responde 302 pra googleusercontent.com. Sem isto, não chegamos no corpo.
+
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setTimeout(15000);
 
+  Serial.println("  [fetch] GET...");
   int code = http.GET();
+  Serial.printf("  [fetch] HTTP %d\n", code);
+
   if (code != 200) {
-    Serial.printf("HTTP %d\n", code);
     http.end();
     return STATE_ERROR;
   }
@@ -316,14 +336,13 @@ State fetchCalendarState() {
   body.trim();
   http.end();
 
-  Serial.printf("Estado bruto: [%s]\n", body.c_str());
+  Serial.printf("  [fetch] resposta: [%s]\n", body.c_str());
   return parseStateString(body);
 }
 
 // =====================================================================
 // MATRIZ — bitmaps 8x8 (bit 1 = LED ligado, bit 0 = apagado)
 // =====================================================================
-// Círculo cheio — verde, amarelo, erro (roxo)
 const uint8_t PATTERN_CIRCLE[8] = {
   0b00111100,
   0b01111110,
@@ -332,30 +351,6 @@ const uint8_t PATTERN_CIRCLE[8] = {
   0b11111111,
   0b11111111,
   0b01111110,
-  0b00111100
-};
-
-// Círculo com X apagado no miolo — vermelho
-const uint8_t PATTERN_CIRCLE_X[8] = {
-  0b00111100,
-  0b01111110,
-  0b11011011,
-  0b11100111,
-  0b11100111,
-  0b11011011,
-  0b01111110,
-  0b00111100
-};
-
-// Círculo com "!" apagado de 2 colunas — amarelo blink (5min warning)
-const uint8_t PATTERN_CIRCLE_BANG[8] = {
-  0b00111100,
-  0b01100110,
-  0b11100111,
-  0b11100111,
-  0b11100111,
-  0b11111111,
-  0b01100110,
   0b00111100
 };
 
@@ -374,18 +369,16 @@ void renderMatrix() {
 
   switch (currentState) {
     case STATE_GREEN:
-      cor = CRGB::Green;
+      cor = CRGB::DarkGreen;
       break;
     case STATE_YELLOW:
-      cor = CRGB::Yellow;
+      cor = CRGB(180, 120, 0);
       break;
     case STATE_RED:
-      pattern = PATTERN_CIRCLE_X;
-      cor = CRGB::Red;
+      cor = CRGB::DarkRed;
       break;
     case STATE_YELLOW_BLINK:
-      pattern = PATTERN_CIRCLE_BANG;
-      cor = ((millis() / BLINK_PERIOD_MS) % 2 == 0) ? CRGB::Yellow : CRGB::Black;
+      cor = ((millis() / BLINK_PERIOD_MS) % 2 == 0) ? CRGB::DarkOrange : CRGB::Black;
       break;
     case STATE_ERROR:
       cor = CRGB::Purple;
@@ -443,7 +436,7 @@ bool handleButton() {
   static unsigned long pressStart = 0;
   static bool wasPressed = false;
 
-  bool pressed = (digitalRead(BOOT_BUTTON_PIN) == LOW);
+  bool pressed = (digitalRead(BOOT_BUTTON_PIN) == LOW) || (digitalRead(EXT_BUTTON_PIN) == LOW);
 
   if (pressed && !wasPressed) {
     pressStart = millis();
@@ -454,23 +447,23 @@ bool handleButton() {
     unsigned long held = millis() - pressStart;
     wasPressed = false;
 
-    if (held >= BTN_HOLD_CONFIG_MS) {
-      startConfigPortal(false);  // não retorna (ESP.restart)
-    } else if (held >= BTN_HOLD_RESET_MS) {
-      startConfigPortal(true);
+    if (held >= BTN_HOLD_RESET_MS) {
+      startConfigPortal(true);   // não retorna (ESP.restart)
+    } else if (held >= BTN_HOLD_CONFIG_MS) {
+      startConfigPortal(false);
     }
     return false;
   }
 
   if (pressed) {
     unsigned long held = millis() - pressStart;
-    if (held >= BTN_HOLD_CONFIG_MS) {
-      fill_solid(leds, NUM_LEDS, CRGB::Blue);     // solta agora = portal mantendo WiFi
+    if (held >= BTN_HOLD_RESET_MS) {
+      fill_solid(leds, NUM_LEDS, CRGB(255, 100, 0));  // solta agora = reset WiFi
       FastLED.show();
       return true;
     }
-    if (held >= BTN_HOLD_RESET_MS) {
-      fill_solid(leds, NUM_LEDS, CRGB(255, 100, 0));  // solta agora = reset WiFi
+    if (held >= BTN_HOLD_CONFIG_MS) {
+      fill_solid(leds, NUM_LEDS, CRGB::Blue);     // solta agora = portal mantendo WiFi
       FastLED.show();
       return true;
     }

@@ -7,23 +7,23 @@ agenda do Google e pinta a matriz:
 |---|---|---|
 | Verde | Círculo cheio | Livre |
 | Amarelo | Círculo cheio | Em reunião sozinho (sem convidados) |
-| Vermelho | Círculo com X apagado | Em reunião com convidados |
-| Amarelo piscando | Círculo com "!" apagado | Reunião vermelha começando em ≤ 5 min |
+| Vermelho | Círculo cheio | Em reunião com convidados |
+| Amarelo piscando | Círculo cheio piscando | Reunião vermelha começando em ≤ 5 min |
 | Roxo | Círculo cheio | Erro / sem configuração |
 
-A família toda usa o mesmo template circular; o que muda é a cor e o
-símbolo vazado no miolo. Um LED de canto mostra a carga da bateria.
+A família toda usa o mesmo template circular; o que muda é a cor (e o
+amarelo pisca). Um LED de canto mostra a carga da bateria.
 
 ```
 VERDE / AMARELO       VERMELHO              AMARELO BLINK
 
 . . X X X X . .      . . R R R R . .      . . Y Y Y Y . .
-. X X X X X X .      . R R R R R R .      . Y Y . . Y Y .
-X X X X X X X X      R R . R R . R R      Y Y Y . . Y Y Y
-X X X X X X X X      R R R . . R R R      Y Y Y . . Y Y Y
-X X X X X X X X      R R R . . R R R      Y Y Y . . Y Y Y
-X X X X X X X X      R R . R R . R R      Y Y Y Y Y Y Y Y
-. X X X X X X .      . R R R R R R .      . Y Y . . Y Y .
+. X X X X X X .      . R R R R R R .      . Y Y Y Y Y Y .
+X X X X X X X X      R R R R R R R R      Y Y Y Y Y Y Y Y
+X X X X X X X X      R R R R R R R R      Y Y Y Y Y Y Y Y
+X X X X X X X X      R R R R R R R R      Y Y Y Y Y Y Y Y
+X X X X X X X X      R R R R R R R R      Y Y Y Y Y Y Y Y
+. X X X X X X .      . R R R R R R .      . Y Y Y Y Y Y .
 . . X X X X . .      . . R R R R . .      . . Y Y Y Y . .
 ```
 
@@ -205,6 +205,9 @@ function doGet(e) {
     ev.getStartTime() <= now && ev.getEndTime() > now
   );
 
+  // Focus Time ativo força estado vermelho
+  if (agora.some(ev => ev.getEventType() === CalendarApp.EventType.FOCUS_TIME)) return out('red');
+
   // 1. Reunião vermelha rolando agora
   if (agora.some(ev => ev.getGuestList().length > 0)) return out('red');
 
@@ -383,7 +386,7 @@ canto superior esquerdo da sua matriz; pode variar conforme o cabeamento).
 ### Alterar os desenhos
 
 Os bitmaps 8x8 ficam no topo da seção `MATRIZ` em `src/main.cpp`:
-`PATTERN_CIRCLE`, `PATTERN_CIRCLE_X`, `PATTERN_CIRCLE_BANG`. Cada byte é
+`PATTERN_CIRCLE`. Cada byte é
 uma linha, cada bit uma coluna (bit 7 = coluna 0 à esquerda). É literal:
 cada `1` = LED ligado com a cor daquele estado, cada `0` = apagado.
 

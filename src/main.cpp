@@ -75,6 +75,9 @@ State        currentState = STATE_UNKNOWN;
 unsigned long lastPollMs  = 0;
 int          consecutiveErrors = 0;
 bool         batteryTaskSent = false;
+volatile bool gButtonActive   = false;
+CRGB          gButtonColor   = CRGB::Black;
+volatile int  gBatteryPercent = -1;
 
 // WiFiManager guarda ponteiros para os parâmetros customizados.
 WiFiManagerParameter* p_url = nullptr;
@@ -85,6 +88,7 @@ WiFiManagerParameter* p_interval = nullptr;
 // =====================================================================
 // FORWARD DECLARATIONS
 // =====================================================================
+void   ledTask(void*);
 void   loadConfig();
 void   saveConfig();
 void   setupWMParameters(WiFiManager& wm);
@@ -100,9 +104,36 @@ CRGB   batteryColor(int percent);
 void   sendBatteryTask();
 
 // =====================================================================
+// LED TASK — roda no core 0, independente do HTTP no core 1
+// =====================================================================
+void ledTask(void*) {
+  State lastState      = STATE_UNKNOWN;
+  bool  lastBtnActive  = false;
+
+  for (;;) {
+    bool btnChanged  = (gButtonActive != lastBtnActive);
+    bool stateChanged = (currentState != lastState);
+    bool isBlinking  = (currentState == STATE_YELLOW_BLINK) ||
+                       (gBatteryPercent >= 0 && gBatteryPercent < 10);
+
+    if (gButtonActive) {
+      fill_solid(leds, NUM_LEDS, gButtonColor);
+      FastLED.show();
+    } else if (stateChanged || isBlinking || btnChanged) {
+      renderMatrix();
+      lastState = currentState;
+    }
+
+    lastBtnActive = gButtonActive;
+    vTaskDelay(pdMS_TO_TICKS((isBlinking || gButtonActive) ? 50 : 200));
+  }
+}
+
+// =====================================================================
 // SETUP / LOOP
 // =====================================================================
 void setup() {
+  setCpuFrequencyMhz(80);
   Serial.begin(115200);
   delay(300);
   Serial.println("\n=== Meet Alert ===");
@@ -123,6 +154,8 @@ void setup() {
   FastLED.setBrightness(cfg.brightness);
 
   connectWiFi();
+  WiFi.setSleep(true);
+  xTaskCreatePinnedToCore(ledTask, "led", 4096, nullptr, 1, nullptr, 0);
 }
 
 void loop() {
@@ -133,9 +166,8 @@ void loop() {
 
   static uint8_t wifiRetries = 0;
   if (WiFi.status() != WL_CONNECTED) {
-    uint8_t v = sin8(millis() / 4);
-    fill_solid(leds, NUM_LEDS, CRGB(v, v / 3, 0));
-    FastLED.show();
+    gButtonColor  = CRGB(180, 60, 0);
+    gButtonActive = true;
     WiFi.reconnect();
     delay(500);
     if (++wifiRetries > 20) ESP.restart();  // ~10s sem WiFi → reabre portal
@@ -164,21 +196,20 @@ void loop() {
     }
 
     // Aproveita a janela de poll (já bloqueante) para enviar alerta de bateria
-    int batPct = readBatteryPercent();
-    if (batPct < 0) Serial.println("Bateria: sem leitura");
-    else            Serial.printf("Bateria: %d%%\n", batPct);
-    if (batPct >= 0 && batPct < 10 && !batteryTaskSent) {
+    gBatteryPercent = readBatteryPercent();
+    if (gBatteryPercent < 0) Serial.println("Bateria: sem leitura");
+    else                     Serial.printf("Bateria: %d%%\n", gBatteryPercent);
+    if (gBatteryPercent >= 0 && gBatteryPercent < 10 && !batteryTaskSent) {
       sendBatteryTask();
       batteryTaskSent = true;
-    } else if (batPct < 0 || batPct >= 15) {
+    } else if (gBatteryPercent < 0 || gBatteryPercent >= 15) {
       batteryTaskSent = false;
     }
 
     lastPollMs = now;
   }
 
-  renderMatrix();
-  delay(50);  // ~20 fps, suficiente para o blink suave
+  delay(10);
 }
 
 // =====================================================================
@@ -278,9 +309,8 @@ void startConfigPortal(bool resetWifi) {
     saveConfig();
   });
 
-  // Azul sólido enquanto portal está aberto.
-  fill_solid(leds, NUM_LEDS, CRGB::Blue);
-  FastLED.show();
+  gButtonColor  = CRGB::Blue;
+  gButtonActive = true;
 
   wm.startConfigPortal(AP_SSID);
 
@@ -388,11 +418,7 @@ void renderMatrix() {
   }
 
   drawPattern(pattern, cor);
-
-  // LED de bateria sobrescreve um único LED
-  int pct = readBatteryPercent();
-  leds[BATTERY_INDICATOR_LED] = batteryColor(pct);
-
+  leds[BATTERY_INDICATOR_LED] = batteryColor(gBatteryPercent);
   FastLED.show();
 }
 
@@ -452,22 +478,24 @@ bool handleButton() {
     } else if (held >= BTN_HOLD_CONFIG_MS) {
       startConfigPortal(false);
     }
+    gButtonActive = false;
     return false;
   }
 
   if (pressed) {
     unsigned long held = millis() - pressStart;
     if (held >= BTN_HOLD_RESET_MS) {
-      fill_solid(leds, NUM_LEDS, CRGB(255, 100, 0));  // solta agora = reset WiFi
-      FastLED.show();
+      gButtonColor  = CRGB(255, 100, 0);
+      gButtonActive = true;
       return true;
     }
     if (held >= BTN_HOLD_CONFIG_MS) {
-      fill_solid(leds, NUM_LEDS, CRGB::Blue);     // solta agora = portal mantendo WiFi
-      FastLED.show();
+      gButtonColor  = CRGB::Blue;
+      gButtonActive = true;
       return true;
     }
   }
+  gButtonActive = false;
   return false;
 }
 

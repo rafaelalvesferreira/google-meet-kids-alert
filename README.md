@@ -5,11 +5,12 @@ agenda do Google e pinta a matriz:
 
 | Estado | Forma | Significado |
 |---|---|---|
-| Verde | Círculo cheio | Livre |
+| Verde | Círculo cheio | Livre (dentro do horário comercial) |
 | Amarelo | Círculo cheio | Em reunião sozinho (sem convidados) |
 | Vermelho | Círculo cheio | Em reunião com convidados |
 | Amarelo piscando | Círculo cheio piscando | Reunião vermelha começando em ≤ 5 min |
 | Roxo | Círculo cheio | Erro / sem configuração |
+| Apagado | — | Fora do horário comercial — dispositivo em deep sleep |
 
 A família toda usa o mesmo template circular; o que muda é a cor (e o
 amarelo pisca). Um LED de canto mostra a carga da bateria.
@@ -251,7 +252,8 @@ function out(s) {
 ### Quanto isso consome de quota?
 
 - Apps Script free: 20.000 chamadas `URL Fetch` por dia.
-- Com polling de 30s: 2.880 chamadas/dia. Folga enorme.
+- Com polling de 30s dentro do horário: 2.880 chamadas/dia. Folga enorme.
+- Fora do horário o dispositivo hiberna e acorda a cada 5 min (configurável) — cai para ~288 chamadas extras por 24h fora do expediente.
 
 ---
 
@@ -310,6 +312,10 @@ Do seu celular:
    - **Token:** o mesmo `TOKEN` que você definiu no Apps Script.
    - **Brilho (1-255):** comece com 30. Mais baixo = bateria dura mais.
    - **Polling (seg):** comece com 30.
+   - **Sleep fora horário (seg):** intervalo de deep sleep fora do expediente. Padrão 300 (5 min).
+   - **Fuso horário:** offset UTC inteiro (ex: `-3` para Brasília, `0` para UTC).
+   - **Expediente início / fim (h):** hora de início e fim em número inteiro (ex: `9` e `18`).
+   - **Dias úteis (DSTQQSS):** string de 7 dígitos, um por dia da semana a partir de domingo. `1` = dia ativo, `0` = dia off. Padrão `0111110` (seg–sex).
 5. Salvar. O device reinicia e conecta.
 
 ---
@@ -389,6 +395,14 @@ Os bitmaps 8x8 ficam no topo da seção `MATRIZ` em `src/main.cpp`:
 `PATTERN_CIRCLE`. Cada byte é
 uma linha, cada bit uma coluna (bit 7 = coluna 0 à esquerda). É literal:
 cada `1` = LED ligado com a cor daquele estado, cada `0` = apagado.
+
+### Mudar o horário comercial
+
+Configure diretamente no portal WiFi do dispositivo (segure o botão por 3s+):
+
+- **Fuso horário**, **Expediente início/fim** e **Dias úteis** são os campos relevantes.
+- A decisão de dormir é feita no firmware: se o estado for verde e o horário atual estiver fora do expediente configurado, o device entra em deep sleep automaticamente.
+- O intervalo de sono é o campo **"Sleep fora horário (seg)"** (padrão 300s = 5 min).
 
 ### Janela de aviso diferente de 5 min
 

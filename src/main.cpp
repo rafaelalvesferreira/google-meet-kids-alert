@@ -563,6 +563,19 @@ CRGB batteryColor(int percent) {
 bool handleButton() {
   static unsigned long pressStart = 0;
   static bool wasPressed = false;
+  static unsigned long lastCall = 0;
+
+  unsigned long now = millis();
+  // Se o loop ficou bloqueado por mais de 2s (ex: HTTP fetch), qualquer
+  // pressStart gravado antes do bloqueio não representa um hold real.
+  if (wasPressed && (now - lastCall) > 2000) {
+    wasPressed    = false;
+    pressStart    = 0;
+    gButtonActive = false;
+    lastCall      = now;
+    return false;
+  }
+  lastCall = now;
 
   bool pressed = (digitalRead(BOOT_BUTTON_PIN) == LOW) || (digitalRead(EXT_BUTTON_PIN) == LOW);
 

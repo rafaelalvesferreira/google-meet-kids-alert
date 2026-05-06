@@ -528,13 +528,17 @@ void renderMatrix() {
 // =====================================================================
 int readBatteryPercent() {
   const int N = 10;
-  uint32_t sum = 0;
-  for (int i = 0; i < N; i++) sum += analogRead(BATTERY_ADC_PIN);
-  float rawAvg = sum / (float)N;
+  uint32_t sumRaw = 0, sumMv = 0;
+  for (int i = 0; i < N; i++) {
+    sumRaw += analogRead(BATTERY_ADC_PIN);
+    sumMv  += analogReadMilliVolts(BATTERY_ADC_PIN);
+  }
+  float rawAvg  = sumRaw / (float)N;
+  float vPinMv  = sumMv  / (float)N;
+  float vBat    = (vPinMv / 1000.0f) * 2.0f;  // desfaz o divisor 1:1
 
-  // analogRead default no ESP32-C6: 12 bits (0-4095), faixa 0-3.3V aprox.
-  float vPin = (rawAvg / 4095.0f) * 3.3f;
-  float vBat = vPin * 2.0f;          // desfaz o divisor 1:1
+  Serial.printf("Bateria ADC: raw=%.0f  vPin=%.0fmV (%.3fV)  vBat=%.3fV\n",
+                rawAvg, vPinMv, vPinMv / 1000.0f, vBat);
 
   if (vBat < BATTERY_EMPTY_V) return -1;  // ausente ou pino flutuando
 
